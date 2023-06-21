@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+
+<getapi xmlns="urn:schemas-fast-com:fast-api">
+	<tables controllerInfo="fills/new" type ="2" filter="" tryCatch="0" method="GET">
+		<table name="#master">
+			<field pathJson="rows[0-n].tid" fastName="_id_doitac" typesql="nvarchar(64)" ignore="true"/>
+			<field pathJson="rows[0-n].effectiveDate" fastName="ngay_lct" typesql="datetime" ignore="true"/>
+		</table>
+		<table name="#detail">
+			<field pathJson="rows[0-n].lineItems[0-m].productCode[0-k].tId" fastName="ma_vt" typesql="nvarchar(64)" ignore="true"/>
+			<field pathJson="rows[0-n].location[0].mId" fastName="ma_dvcs" typesql="nvarchar(64)" ignore="true"/>
+			<field pathJson="rows[0-n].lineItems[0-m].quantity" fastName="so_luong" typesql="numeric(19,3)" ignore="true"/>
+		</table>
+		<paramerters>
+			<partameter Key="includeVendorFills" Value="false"></partameter>
+			<partameter Key="excludeFillForCustomer" Value="true"></partameter>
+			<partameter Key="returnPreviousProductCodes" Value="false"></partameter>
+			<partameter Key="maxRows" Value="1"></partameter>
+		</paramerters>
+	</tables>
+	<query>
+		<text>
+			<![CDATA[
+----SalesInvoice
+delete #master where rtrim(ltrim(order_processing_status)) <> 'complete'
+delete #httt from #httt a where a.trang_thai_tt <> 'capture'
+delete #httt from #httt a where not exists(select 1 from #master z where a.id_doitac = z.id_doitac)
+
+
+alter table #master add ma_dvcs char(8), ma_nk varchar(32)
+alter table #detail add ma_kho varchar(33)
+select identity (int,1, 1) as _id, id_haravan, ma_dvcs, a.ma_kho, ten_kho, tk_dt, tk_gv, ma_bp_kho into #site from dmkho a where id_haravan <> ''
+
+--update dvcs theo kho | chot 1 phieu chi co 1 kho
+update #detail set ma_kho = b.ma_kho
+	from #detail a join #site b on a.location_id = b.id_haravan
+
+update #master set ma_dvcs = b.ma_dvcs
+	from #master a join (
+												select id_doitac, max(s.ma_dvcs) ma_dvcs
+													from #detail d join #site s on d.ma_kho = s.ma_kho
+													group by id_doitac
+		                ) b on a.id_doitac = b.id_doitac
+
+exec fsd_RemoveVoucherLockDate '#master', '#detail', 'HDA', 1, 'id_doitac'
+
+declare @tong_dong int = 0, @last_check datetime = getdate()
+select  @tong_dong = count(*) from #master
+select @tong_dong as tong_dong, @last_check as last_check, @error as loi
+
+declare @isContitnue bit
+exec api_checkBefore 'SalesOrder', 'apikeymap', 'Voucher', 'HDA', '', 0, '', '', @isContitnue output, default, default, default, '#master'
+
+exec fsd_SaveLogTable 'SalesInvoice', '#master, #detail, #httt'
+
+if @isContitnue = 1 exec api_ProcessDataFor_m81 '@@sysDatabaseName'
+]]>
+		</text>
+	</query>
+
+</getapi>
+
+
